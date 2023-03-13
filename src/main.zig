@@ -350,38 +350,26 @@ fn lineToTask(line: []const u8, alloc: std.mem.Allocator) !Task {
             continue;
         }
 
-        switch (char) {
-            '@' => { // process a context
-                if (find(u8, slice[idx..], ' ')) |end| {
-                    try task.tokens.append(Token{
-                        .data = slice[start..idx],
-                        .type = TokType.WORDS,
-                    });
+        var token = switch (char) {
+            '@' => TokType.CONTEXT,  
+            '+' =>TokType.PROJECT,
+            else => TokType.DONE,
+        };
 
-                    try task.tokens.append(Token{
-                        .data = slice[idx .. idx + end],
-                        .type = TokType.CONTEXT,
-                    });
-                    start = idx + end;
-                    skip = end;
-                }
-            },
-            '+' => {
-                if (find(u8, slice[idx..], ' ')) |end| {
-                    try task.tokens.append(Token{
-                        .data = slice[start..idx],
-                        .type = TokType.WORDS,
-                    });
+        if(token != TokType.DONE ) {
+            if (find(u8, slice[idx..], ' ')) |end| {
+                try task.tokens.append(Token{
+                    .data = slice[start..idx],
+                    .type = TokType.WORDS,
+                });
 
-                    try task.tokens.append(Token{
-                        .data = slice[idx .. idx + end],
-                        .type = TokType.PROJECT,
-                    });
-                    start = idx + end;
-                    skip = end;
-                }
-            },
-            else => {},
+                try task.tokens.append(Token{
+                    .data = slice[idx .. idx + end],
+                    .type = token,
+                });
+                start = idx + end;
+                skip = end;
+            }
         }
     }
 
