@@ -25,11 +25,6 @@ const KeyName = enum(u32) {
     KEY_PAGE_DOWN,
 };
 
-const Point = struct {
-    row: u32,
-    col: u32,
-};
-
 const TokType = enum { DONE, PRIORITY, DATE, WORDS, CONTEXT, PROJECT };
 
 const Token = struct {
@@ -169,26 +164,6 @@ fn getWinSz() sys.winsize {
         unreachable;
     };
     return ws;
-}
-
-// get the current termianl cursor position
-fn getCursorPos() Point {
-    var buf: [32]u8 = undefined;
-
-    _ = sys.write(sys.STDOUT_FILENO, "\x1b[6n", 4);
-    _ = sys.read(sys.STDIN_FILENO, buf[0..], 32);
-
-    // bloody hell I miss scanf :-(
-    var readIter = std.mem.tokenize(u8, buf[2..], ";");
-    var a = readIter.next().?;
-    var b = readIter.next().?;
-    var bs = std.mem.split(u8, b, "R");
-    b = bs.next().?;
-
-    return Point{
-        .row = std.fmt.parseInt(u32, a, 10) catch unreachable,
-        .col = std.fmt.parseInt(u32, b, 10) catch unreachable,
-    };
 }
 
 // turn on "raw mode" for the terminal
@@ -488,10 +463,6 @@ pub fn main() !void {
     state.rows = ws.ws_row;
 
     updateLoop();
-
-    // Prints to stderr (it's a shortcut based on `std.io.getStdErr()`)
-    //std.debug.print("get {} {}\n", .{ws.ws_col, ws.ws_row});
-    //std.debug.print("cur {} {}\n", .{p.col, p.row});
 }
 
 test "simple test" {
