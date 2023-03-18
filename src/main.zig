@@ -36,8 +36,8 @@ const Token = struct {
 const Task = struct {
     done: bool,
     priority: u32,
-    commenced: []const u8,
-    completed: []const u8,
+    creationDate: []const u8,
+    completionDate: []const u8,
     tokens: std.ArrayList(Token),
 };
 
@@ -236,7 +236,7 @@ fn readKey() IoError!u32 {
     }
 
     return c[0];
-}
+} 
 
 fn display() void {
     var i: u32 = 0;
@@ -303,8 +303,8 @@ fn lineToTask(line: []const u8, alloc: std.mem.Allocator) !Task {
         .tokens = std.ArrayList(Token).init(alloc),
         .done = false,
         .priority = 'Z',
-        .completed = "",
-        .commenced = "",
+        .creationDate = "",
+        .completionDate= "",
     };
 
     var slice = line[0..];
@@ -321,21 +321,23 @@ fn lineToTask(line: []const u8, alloc: std.mem.Allocator) !Task {
         slice = slice[4..];
     }
 
-    // look for completion date
+    // look for a date - it's the creation date, unless ...
     if (slice[0] == '[') {
         if (find(u8, slice, ']')) |end| {
             if (end < slice.len and slice[end + 1] == ' ') {
-                task.completed = slice[0..end];
+                task.creationDate = slice[0..end];
                 slice = slice[end + 2 ..];
             }
         }
     }
 
-    // look for commencement date
+    // ... we find a second date, then its the completion data and
+    // this is actually the creation data.
     if (slice[0] == '[') {
         if (find(u8, slice, ']')) |end| {
             if (end < slice.len and slice[end + 1] == ' ') {
-                task.completed = slice[0..end];
+                task.completionDate = task.creationDate;
+                task.creationDate = slice[0..end];
                 slice = slice[end + 2 ..];
             }
         }
