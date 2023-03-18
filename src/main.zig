@@ -403,29 +403,28 @@ fn updateLoop() void {
             unreachable; // TODO: smart stuff here
         };
 
-        if (x >= @enumToInt(KeyName.KEY_UNKNOWN)) {
-            switch (@intToEnum(KeyName, x)) {
-                KeyName.KEY_UNKNOWN => {}, // ignore unknown keys
-                KeyName.KEY_ARROW_LEFT => {
-                    state.tasks.items[state.highlight].done = false;
-                },
-                KeyName.KEY_ARROW_RIGHT => {
-                    state.tasks.items[state.highlight].done = true;
-                },
-                KeyName.KEY_ARROW_UP => {
-                    state.highlight =
-                        if (state.highlight == 0) state.highlight else state.highlight - 1;
-                },
-                KeyName.KEY_ARROW_DOWN => {
-                    state.highlight =
-                        if (state.highlight < state.tasks.items.len - 1) state.highlight + 1 else state.highlight;
-                },
-                KeyName.KEY_DEL => {},
-                KeyName.KEY_HOME => {},
-                KeyName.KEY_END => {},
-                KeyName.KEY_PAGE_UP => {},
-                KeyName.KEY_PAGE_DOWN => {},
-            }
+        switch (x) {
+            @enumToInt(KeyName.KEY_UNKNOWN) => {}, // ignore unknown keys
+            @enumToInt(KeyName.KEY_ARROW_LEFT), 'h' => {
+                state.tasks.items[state.highlight].done = false;
+            },
+            @enumToInt(KeyName.KEY_ARROW_RIGHT), 'l' => {
+                state.tasks.items[state.highlight].done = true;
+            },
+            @enumToInt(KeyName.KEY_ARROW_UP), 'j' => {
+                state.highlight =
+                    if (state.highlight == 0) state.highlight else state.highlight - 1;
+            },
+            @enumToInt(KeyName.KEY_ARROW_DOWN), 'k' => {
+                state.highlight =
+                    if (state.highlight < state.tasks.items.len - 1) state.highlight + 1 else state.highlight;
+            },
+            @enumToInt(KeyName.KEY_DEL) => {},
+            @enumToInt(KeyName.KEY_HOME) => {},
+            @enumToInt(KeyName.KEY_END) => {},
+            @enumToInt(KeyName.KEY_PAGE_UP) => {},
+            @enumToInt(KeyName.KEY_PAGE_DOWN) => {},
+            else => {}
         }
     }
 }
