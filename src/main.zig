@@ -339,6 +339,7 @@ fn filterTasks() !void {
     if (state.projectFilter) applyFilter(TokType.PROJECT, &state.project.memory);
     try collectTasks();
     state.highlight = 0;
+    state.offset = 0;
 }
 
 fn buildFilter(comptime T: type, buf: *T, task: *Task, tokType: TokType) void {
