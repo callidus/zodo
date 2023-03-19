@@ -63,10 +63,10 @@ fn buildBuffer(comptime T: usize) Buffer(T) {
 
 // global state struct
 const State = struct {
-    rows: u32,
-    cols: u32,
-    offset: u32,
-    highlight: u32,
+    rows: usize,
+    cols: usize,
+    offset: usize,
+    highlight: usize,
     iptBuffer: Buffer(512),
     project: Buffer(64),
     context: Buffer(64),
@@ -291,9 +291,8 @@ fn updateLoop() void {
                 state.filteredTasks.items[state.highlight].done = true;
             },
             @enumToInt(tui.KeyName.KEY_ARROW_UP), 'j' => {
-                const m = state.offset;
                 state.highlight = if (state.highlight == 0) state.highlight else state.highlight - 1;
-                if (state.highlight < m) state.offset -= 1;
+                if (state.highlight < state.offset) state.offset -= 1;
             },
             @enumToInt(tui.KeyName.KEY_ARROW_DOWN), 'k' => {
                 const m = (state.rows + state.offset) - 2;
@@ -303,8 +302,17 @@ fn updateLoop() void {
             @enumToInt(tui.KeyName.KEY_DEL) => {},
             @enumToInt(tui.KeyName.KEY_HOME) => {},
             @enumToInt(tui.KeyName.KEY_END) => {},
-            @enumToInt(tui.KeyName.KEY_PAGE_UP) => {},
-            @enumToInt(tui.KeyName.KEY_PAGE_DOWN) => {},
+            @enumToInt(tui.KeyName.KEY_PAGE_UP) => {
+                const m = state.rows - 2;
+                state.highlight = if (state.highlight < m) 0 else state.highlight - m;
+                if (state.highlight < state.offset) state.offset = state.highlight;
+            },
+            @enumToInt(tui.KeyName.KEY_PAGE_DOWN) => {
+                const m = (state.rows + state.offset) - 2;
+                state.highlight += (state.rows - 2);
+                if (state.highlight >= state.filteredTasks.items.len) state.highlight = state.filteredTasks.items.len - 1;
+                if (state.highlight > m) state.offset = state.highlight - 2;
+            },
             'p' => {
                 buildFilter(@TypeOf(state.project), &state.project, state.filteredTasks.items[state.highlight], TokType.PROJECT);
                 state.projectFilter = true;
