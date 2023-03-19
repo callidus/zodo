@@ -94,8 +94,9 @@ var state = State{
 fn display() void {
     tui.clear();
 
-    var i: u32 = 0;
-    for (state.filteredTasks.items) |task| {
+    var j: u32 = 0;
+    for (state.filteredTasks.items, 0..) |task, i| {
+        if (i < state.offset) continue;
         tui.output(if (i == state.highlight) ">" else " ");
 
         if (task.done) {
@@ -126,11 +127,11 @@ fn display() void {
         tui.output("\r\n");
         tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
 
-        i += 1;
-        if (i == state.rows - 1) break;
+        j += 1;
+        if (j == state.rows - 1) break;
     }
 
-    for (0..(state.rows - i - 1)) |_| {
+    for (0..(state.rows - j - 1)) |_| {
         tui.output("\r\n");
     }
 
@@ -290,12 +291,14 @@ fn updateLoop() void {
                 state.filteredTasks.items[state.highlight].done = true;
             },
             @enumToInt(tui.KeyName.KEY_ARROW_UP), 'j' => {
-                state.highlight =
-                    if (state.highlight == 0) state.highlight else state.highlight - 1;
+                const m = state.offset;
+                state.highlight = if (state.highlight == 0) state.highlight else state.highlight - 1;
+                if (state.highlight < m) state.offset -= 1;
             },
             @enumToInt(tui.KeyName.KEY_ARROW_DOWN), 'k' => {
-                state.highlight =
-                    if (state.highlight < state.filteredTasks.items.len - 1) state.highlight + 1 else state.highlight;
+                const m = (state.rows + state.offset) - 2;
+                state.highlight = if (state.highlight < state.filteredTasks.items.len - 1) state.highlight + 1 else state.highlight;
+                if (state.highlight > m) state.offset += 1;
             },
             @enumToInt(tui.KeyName.KEY_DEL) => {},
             @enumToInt(tui.KeyName.KEY_HOME) => {},
