@@ -94,7 +94,8 @@ var state = State{
 fn display() void {
     tui.clear();
 
-    for (state.filteredTasks.items, 0..) |task, i| {
+    var i: u32 = 0;
+    for (state.filteredTasks.items) |task| {
         tui.output(if (i == state.highlight) ">" else " ");
 
         if (task.done) {
@@ -125,10 +126,11 @@ fn display() void {
         tui.output("\r\n");
         tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
 
-        if (i == state.rows - 2) break;
+        i += 1;
+        if (i == state.rows - 1) break;
     }
 
-    for (0..(state.rows - state.filteredTasks.items.len - 2)) |_| {
+    for (0..(state.rows - i - 1)) |_| {
         tui.output("\r\n");
     }
 
