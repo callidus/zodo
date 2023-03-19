@@ -11,3 +11,9 @@ A todo.txt TUI coded in Zig. This is an effort to learn the Zig programming lang
 | up, j    | Move up          |
 | down, k  | Move down        |
 | q        | quit             |
+| p        | lower-case p, filter task list by the selected tasks projects |
+| P        | upper-case P, remove any project filter |
+| c        | lower-case c, filter task list by the selected tasks contexts |
+| C        | upper-case C, remove any context filter |
+
+Applying a context and project filter will hide all tasks that do not have at least one selected context and at least one selecte dproject.

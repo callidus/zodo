@@ -1,29 +1,6 @@
 const std = @import("std");
 const sys = std.os.system;
-
-pub const IoCtlError = error{
-    FileSystem,
-    InterfaceNotFound,
-} || std.os.UnexpectedError;
-
-// are there built in errors I can use for this stuff?
-pub const IoError = error{
-    IoErrorWriteFailed, // could not write
-    IoErrorReadFailed, // could not read
-};
-
-const KeyName = enum(u32) {
-    KEY_UNKNOWN = 1000,
-    KEY_ARROW_LEFT,
-    KEY_ARROW_RIGHT,
-    KEY_ARROW_UP,
-    KEY_ARROW_DOWN,
-    KEY_DEL,
-    KEY_HOME,
-    KEY_END,
-    KEY_PAGE_UP,
-    KEY_PAGE_DOWN,
-};
+const tui = @import("tui");
 
 const TokType = enum { DONE, PRIORITY, DATE, WORDS, CONTEXT, PROJECT };
 
@@ -35,11 +12,54 @@ const Token = struct {
 // a TODO task
 const Task = struct {
     done: bool,
+    hidden: bool,
     priority: u32,
     creationDate: []const u8,
     completionDate: []const u8,
     tokens: std.ArrayList(Token),
 };
+
+const BufError = error{
+    NoSpace,
+};
+
+fn Buffer(comptime T: usize) type {
+    return struct {
+        memory: [T]u8,
+        fill: usize,
+
+        fn clear(self: *@This()) void {
+            std.mem.set(u8, &self.memory, 0);
+            self.fill = 0;
+        }
+
+        fn hasSpaceFor(self: *@This(), size: usize) bool {
+            return self.memory.len - self.fill >= size;
+        }
+
+        fn getFreeSlice(self: *@This()) []u8 {
+            return self.memory[self.fill..];
+        }
+
+        fn pushBytes(self: *@This(), data: []const u8) BufError!void {
+            if (self.hasSpaceFor(data.len)) {
+                std.mem.copy(u8, self.getFreeSlice(), data);
+                self.fill += data.len;
+                return;
+            }
+            return BufError.NoSpace;
+        }
+    };
+}
+
+fn buildBuffer(comptime T: usize) Buffer(T) {
+    var b = Buffer(T){
+        .memory = undefined,
+        .fill = 0,
+    };
+    std.mem.set(u8, &b.memory, 0);
+    return b;
+}
 
 // global state struct
 const State = struct {
@@ -47,10 +67,13 @@ const State = struct {
     cols: u32,
     offset: u32,
     highlight: u32,
-    origTermios: std.os.termios,
-    buffer: [1024]u8,
-    bufFill: usize,
+    iptBuffer: Buffer(512),
+    project: Buffer(64),
+    context: Buffer(64),
     tasks: std.ArrayList(Task),
+    filteredTasks: std.ArrayList(*Task),
+    projectFilter: bool,
+    contextFilter: bool,
 };
 
 // global state instance
@@ -59,194 +82,23 @@ var state = State{
     .cols = 0,
     .offset = 0,
     .highlight = 0,
-    .origTermios = undefined,
-    .buffer = undefined,
-    .bufFill = 0,
+    .iptBuffer = buildBuffer(512),
+    .project = buildBuffer(64),
+    .context = buildBuffer(64),
     .tasks = undefined,
+    .filteredTasks = undefined,
+    .projectFilter = false,
+    .contextFilter = false,
 };
-
-// -- stuff for colours
-
-const Colour = enum(u32) {
-    FG_BLACK = 30,
-    FG_RED = 31,
-    FG_GREEN = 32,
-    FG_YELLOW = 33,
-    FG_BLUE = 34,
-    FG_MAGENTA = 35,
-    FG_CYAN = 36,
-    FG_WHITE = 37,
-    FG_DEFAULT = 39,
-    BG_BLACK = 40,
-    BG_RED = 41,
-    BG_GREEN = 42,
-    BG_YELLOW = 43,
-    BG_BLUE = 44,
-    BG_MAGENTA = 45,
-    BG_CYAN = 46,
-    BG_WHITE = 47,
-    BG_DEFAULT = 49,
-};
-
-const ColourMod = enum(u32) {
-    NONE = 0,
-    BOLD = 1,
-    LOW = 2,
-};
-
-// build a colour
-fn buildColour(a: Colour, b: ColourMod) u32 {
-    return (@enumToInt(a) << 2) | @enumToInt(b);
-}
-
-// set a colour
-fn setColour(col: u32) void {
-    var buf: [32]u8 = undefined;
-    const out = std.fmt.bufPrint(&buf, "\x1b[{}m\x1b[{}m", .{ 0x00000002 & col, col >> 2 }) catch {
-        unreachable;
-    };
-    output(out);
-}
-
-// --
-
-// buffered output
-fn output(data: []const u8) void {
-    var len = std.math.min(state.buffer.len - state.bufFill, data.len);
-    var buf = state.buffer[state.bufFill..];
-    _ = std.fmt.bufPrint(buf, "{s}", .{data[0..len]}) catch {
-        unreachable;
-    };
-    state.bufFill += len;
-
-    if (len < data.len) {
-        flush();
-        output(data[len..]);
-    }
-}
-
-fn flush() void {
-    _ = sys.write(sys.STDOUT_FILENO, state.buffer[0..], state.bufFill);
-    state.bufFill = 0;
-}
-
-//
-
-// see https://github.com/ziglang/zig/issues/12961
-pub fn ioctl(fd: sys.fd_t, request: u32, arg: usize) IoCtlError!void {
-    while (true) {
-        switch (sys.getErrno(sys.ioctl(fd, request, arg))) {
-            .SUCCESS => return,
-            .INVAL => unreachable, // Bad parameters.
-            .NOTTY => unreachable,
-            .NXIO => unreachable,
-            .BADF => unreachable, // Always a race condition.
-            .FAULT => unreachable, // Bad pointer parameter.
-            .INTR => continue,
-            .IO => return error.FileSystem,
-            .NODEV => return error.InterfaceNotFound,
-            else => |err| return std.os.unexpectedErrno(err),
-        }
-    }
-}
-
-// get the size of the terminal window hosting this process
-fn getWinSz() sys.winsize {
-    var ws = sys.winsize{
-        .ws_col = 0,
-        .ws_row = 0,
-        .ws_xpixel = 0,
-        .ws_ypixel = 0,
-    };
-
-    ioctl(sys.STDOUT_FILENO, sys.T.IOCGWINSZ, @ptrToInt(&ws)) catch {
-        // FIXME: want to use perror here .....
-        unreachable;
-    };
-    return ws;
-}
-
-// turn on "raw mode" for the terminal
-fn enableRawMode() void {
-    state.origTermios = std.os.tcgetattr(sys.STDIN_FILENO) catch {
-        unreachable; // FIXME: do somthing smart here
-    };
-
-    var raw = state.origTermios;
-    raw.lflag &= ~(sys.ECHO | sys.ICANON | sys.IEXTEN | sys.ISIG);
-    raw.iflag &= ~(sys.BRKINT | sys.ICRNL | sys.INPCK | sys.ISTRIP | sys.IXON);
-    raw.oflag &= ~(sys.OPOST);
-    raw.cflag |= sys.CS8;
-
-    std.os.tcsetattr(sys.STDIN_FILENO, sys.TCSA.FLUSH, raw) catch {
-        unreachable; // FIXME: do smart stuff here
-    };
-
-    output("\x1b[?25l"); // hide cursor
-}
-
-// turn off "raw mode" for the terminal, return to default state
-fn disableRawMode() void {
-    setColour(buildColour(Colour.FG_DEFAULT, ColourMod.NONE));
-    setColour(buildColour(Colour.BG_DEFAULT, ColourMod.NONE));
-
-    output("\x1b[2J"); // clear screen
-    output("\x1b[?25h"); // show cursor
-    output("\x1b[0m"); // clear graphics flags
-    output("\x1b[?25h"); // show cursor
-    output("\x1b[H"); // home
-    flush();
-
-    std.os.tcsetattr(sys.STDIN_FILENO, sys.TCSA.FLUSH, state.origTermios) catch {
-        unreachable; // FIXME: do smart stuff here
-    };
-}
-
-// read in a key press, return an integer value (possibly a member of KeyName enum)
-fn readKey() IoError!u32 {
-    var c: [3]u8 = undefined;
-    while (true) {
-        var x = sys.read(sys.STDIN_FILENO, c[0..], 1);
-        if (x != 1) {
-            if (sys.getErrno(x) == sys.E.AGAIN) {
-                continue;
-            }
-            return IoError.IoErrorReadFailed;
-        }
-        break;
-    }
-
-    if (c[0] == '\x1b') {
-        var x = sys.read(sys.STDIN_FILENO, c[1..], 2);
-        if (x != 2) {
-            return c[0];
-        }
-
-        if (std.mem.eql(u8, &c, "\x1b[A")) return @enumToInt(KeyName.KEY_ARROW_UP);
-        if (std.mem.eql(u8, &c, "\x1b[B")) return @enumToInt(KeyName.KEY_ARROW_DOWN);
-        if (std.mem.eql(u8, &c, "\x1b[C")) return @enumToInt(KeyName.KEY_ARROW_RIGHT);
-        if (std.mem.eql(u8, &c, "\x1b[D")) return @enumToInt(KeyName.KEY_ARROW_LEFT);
-        if (std.mem.eql(u8, &c, "\x1b[H")) return @enumToInt(KeyName.KEY_HOME);
-        if (std.mem.eql(u8, &c, "\x1b[4")) return @enumToInt(KeyName.KEY_END);
-        if (std.mem.eql(u8, &c, "\x1b[5")) return @enumToInt(KeyName.KEY_PAGE_UP);
-        if (std.mem.eql(u8, &c, "\x1b[6")) return @enumToInt(KeyName.KEY_PAGE_DOWN);
-        if (std.mem.eql(u8, &c, "\x1b[P")) return @enumToInt(KeyName.KEY_DEL);
-
-        //std.debug.print("got '{c}' '{c}' '{c}'\n", .{ c[0], c[1], c[2] });
-    }
-
-    return c[0];
-} 
 
 fn display() void {
-    var i: u32 = 0;
-    output("\x1b[1;1H\x1b[2J"); // position at origin, clear screen
+    tui.clear();
 
-    for (state.tasks.items) |task| {
-        output(if (i == state.highlight) ">" else " ");
+    for (state.filteredTasks.items, 0..) |task, i| {
+        tui.output(if (i == state.highlight) ">" else " ");
 
         if (task.done) {
-            setColour(buildColour(Colour.FG_WHITE, ColourMod.LOW));
+            tui.setColour(tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
         }
 
         for (task.tokens.items) |token| {
@@ -255,40 +107,62 @@ fn display() void {
                     TokType.DONE => {},
                     TokType.PRIORITY => {},
                     TokType.DATE => {
-                        setColour(buildColour(Colour.FG_YELLOW, ColourMod.NONE));
+                        tui.setColour(tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.NONE));
                     },
                     TokType.WORDS => {
-                        setColour(buildColour(Colour.FG_DEFAULT, ColourMod.NONE));
+                        tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
                     },
                     TokType.CONTEXT => {
-                        setColour(buildColour(Colour.FG_BLUE, ColourMod.NONE));
+                        tui.setColour(tui.buildColour(tui.Colour.FG_BLUE, tui.ColourMod.NONE));
                     },
                     TokType.PROJECT => {
-                        setColour(buildColour(Colour.FG_GREEN, ColourMod.NONE));
+                        tui.setColour(tui.buildColour(tui.Colour.FG_GREEN, tui.ColourMod.NONE));
                     },
                 }
             }
-            output(token.data[0..std.math.min(state.cols - 2, token.data.len)]);
+            tui.output(token.data[0..std.math.min(state.cols - 2, token.data.len)]);
         }
-        output("\r\n");
-        setColour(buildColour(Colour.FG_DEFAULT, ColourMod.NONE));
+        tui.output("\r\n");
+        tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
 
-        i += 1;
-        if (i == state.rows) break;
+        if (i == state.rows - 2) break;
     }
-    flush();
+
+    for (0..(state.rows - state.filteredTasks.items.len - 2)) |_| {
+        tui.output("\r\n");
+    }
+
+    // print footer
+    tui.outputFmt("({}/{})", .{ state.highlight + 1, state.filteredTasks.items.len }) catch {
+        unreachable;
+    };
+
+    // print project filter status
+    tui.setColour(if (state.projectFilter) tui.buildColour(tui.Colour.FG_GREEN, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+    tui.output(" | Project: ");
+    if (state.projectFilter) tui.output(state.project.memory[0..state.project.fill]);
+
+    // print context filter status
+    tui.setColour(if (state.contextFilter) tui.buildColour(tui.Colour.FG_BLUE, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+    tui.output(" | Context: ");
+    if (state.contextFilter) tui.output(state.context.memory[0..state.context.fill]);
+
+    // reset for next run
+    tui.setColour(tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.NONE));
+    tui.flush();
 }
 
 // read in a file
 fn readInputFile(path: []const u8, alloc: std.mem.Allocator) ![]const u8 {
     const file = try std.fs.cwd().openFile(path, .{});
     defer file.close();
+
     const stat = try file.stat();
     const fileSize = stat.size;
     return try file.reader().readAllAlloc(alloc, fileSize);
 }
 
-// find in index of elem in slice (like std.mem.indexOf)
+// find index of elem in slice (like std.mem.indexOf)
 fn find(comptime T: type, slice: []const T, val: T) ?usize {
     return find: for (slice, 0..) |char, idx| {
         if (char == val) break :find idx;
@@ -302,9 +176,10 @@ fn lineToTask(line: []const u8, alloc: std.mem.Allocator) !Task {
     var task = Task{
         .tokens = std.ArrayList(Token).init(alloc),
         .done = false,
+        .hidden = false,
         .priority = 'Z',
         .creationDate = "",
-        .completionDate= "",
+        .completionDate = "",
     };
 
     var slice = line[0..];
@@ -353,25 +228,25 @@ fn lineToTask(line: []const u8, alloc: std.mem.Allocator) !Task {
         }
 
         var token = switch (char) {
-            '@' => TokType.CONTEXT,  
-            '+' =>TokType.PROJECT,
+            '@' => TokType.CONTEXT,
+            '+' => TokType.PROJECT,
             else => TokType.DONE,
         };
 
-        if(token != TokType.DONE ) {
-            if (find(u8, slice[idx..], ' ')) |end| {
-                try task.tokens.append(Token{
-                    .data = slice[start..idx],
-                    .type = TokType.WORDS,
-                });
+        if (token != TokType.DONE) {
+            var end = find(u8, slice[idx..], ' ') orelse slice.len - idx;
 
-                try task.tokens.append(Token{
-                    .data = slice[idx .. idx + end],
-                    .type = token,
-                });
-                start = idx + end;
-                skip = end;
-            }
+            try task.tokens.append(Token{
+                .data = slice[start..idx],
+                .type = TokType.WORDS,
+            });
+
+            try task.tokens.append(Token{
+                .data = slice[idx .. idx + end],
+                .type = token,
+            });
+            start = idx + end;
+            skip = end;
         }
     }
 
@@ -397,35 +272,105 @@ fn parseLines(data: []const u8, alloc: std.mem.Allocator) !std.ArrayList(Task) {
 
 fn updateLoop() void {
     var x: u32 = '0';
+    var shouldFilter = false;
     while (x != 'q') {
         display();
-        x = readKey() catch {
+        x = tui.readKey() catch {
             unreachable; // TODO: smart stuff here
         };
 
         switch (x) {
-            @enumToInt(KeyName.KEY_UNKNOWN) => {}, // ignore unknown keys
-            @enumToInt(KeyName.KEY_ARROW_LEFT), 'h' => {
-                state.tasks.items[state.highlight].done = false;
+            @enumToInt(tui.KeyName.KEY_UNKNOWN) => {}, // ignore unknown keys
+            @enumToInt(tui.KeyName.KEY_ARROW_LEFT), 'h' => {
+                state.filteredTasks.items[state.highlight].done = false;
             },
-            @enumToInt(KeyName.KEY_ARROW_RIGHT), 'l' => {
-                state.tasks.items[state.highlight].done = true;
+            @enumToInt(tui.KeyName.KEY_ARROW_RIGHT), 'l' => {
+                state.filteredTasks.items[state.highlight].done = true;
             },
-            @enumToInt(KeyName.KEY_ARROW_UP), 'j' => {
+            @enumToInt(tui.KeyName.KEY_ARROW_UP), 'j' => {
                 state.highlight =
                     if (state.highlight == 0) state.highlight else state.highlight - 1;
             },
-            @enumToInt(KeyName.KEY_ARROW_DOWN), 'k' => {
+            @enumToInt(tui.KeyName.KEY_ARROW_DOWN), 'k' => {
                 state.highlight =
-                    if (state.highlight < state.tasks.items.len - 1) state.highlight + 1 else state.highlight;
+                    if (state.highlight < state.filteredTasks.items.len - 1) state.highlight + 1 else state.highlight;
             },
-            @enumToInt(KeyName.KEY_DEL) => {},
-            @enumToInt(KeyName.KEY_HOME) => {},
-            @enumToInt(KeyName.KEY_END) => {},
-            @enumToInt(KeyName.KEY_PAGE_UP) => {},
-            @enumToInt(KeyName.KEY_PAGE_DOWN) => {},
-            else => {}
+            @enumToInt(tui.KeyName.KEY_DEL) => {},
+            @enumToInt(tui.KeyName.KEY_HOME) => {},
+            @enumToInt(tui.KeyName.KEY_END) => {},
+            @enumToInt(tui.KeyName.KEY_PAGE_UP) => {},
+            @enumToInt(tui.KeyName.KEY_PAGE_DOWN) => {},
+            'p' => {
+                buildFilter(@TypeOf(state.project), &state.project, state.filteredTasks.items[state.highlight], TokType.PROJECT);
+                state.projectFilter = true;
+                shouldFilter = true;
+            },
+            'P' => {
+                state.projectFilter = false;
+                shouldFilter = true;
+            },
+            'c' => {
+                buildFilter(@TypeOf(state.context), &state.context, state.filteredTasks.items[state.highlight], TokType.CONTEXT);
+                state.contextFilter = true;
+                shouldFilter = true;
+            },
+            'C' => {
+                state.contextFilter = false;
+                shouldFilter = true;
+            },
+            else => {},
         }
+
+        if (shouldFilter) {
+            filterTasks() catch unreachable;
+            shouldFilter = false;
+        }
+    }
+}
+
+fn filterTasks() !void {
+    clearFilter();
+    if (state.contextFilter) applyFilter(TokType.CONTEXT, &state.context.memory);
+    if (state.projectFilter) applyFilter(TokType.PROJECT, &state.project.memory);
+    try collectTasks();
+    state.highlight = 0;
+}
+
+fn buildFilter(comptime T: type, buf: *T, task: *Task, tokType: TokType) void {
+    buf.clear();
+    for (task.tokens.items) |token| {
+        if (token.type == tokType) {
+            buf.pushBytes(token.data) catch {};
+            buf.pushBytes(" ") catch {};
+        }
+    }
+}
+
+fn applyFilter(tokType: TokType, filterStr: []u8) void {
+    filter: for (state.tasks.items) |*task| {
+        if (task.hidden) continue :filter; // dont re-show hidden stuff
+
+        task.hidden = true;
+        var itr = std.mem.tokenize(u8, filterStr, " ");
+        while (itr.next()) |entry| {
+            for (task.tokens.items) |token| {
+                if (token.type == tokType and std.mem.eql(u8, token.data, entry)) {
+                    task.hidden = false;
+                    continue :filter;
+                }
+            }
+        }
+    }
+}
+
+fn clearFilter() void {
+    for (state.tasks.items) |*task| task.hidden = false;
+}
+
+fn collectTasks() !void {
+    state.filteredTasks.clearRetainingCapacity();
+    for (state.tasks.items) |*task| {
+        if (!task.hidden) try state.filteredTasks.append(task);
     }
 }
 
@@ -438,19 +383,22 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     var alloc = gpa.allocator();
     var data = try readInputFile(std.mem.span(std.os.argv[1]), alloc);
-    //var data = try readInputFile("./test.txt", alloc);
     defer alloc.free(data);
 
     state.tasks = try parseLines(data, alloc);
     defer state.tasks.deinit();
 
-    enableRawMode();
-    defer disableRawMode();
+    state.filteredTasks = std.ArrayList(*Task).init(alloc);
+    defer state.filteredTasks.deinit();
 
-    var ws = getWinSz();
+    tui.enableRawMode();
+    defer tui.disableRawMode();
+
+    var ws = tui.getWinSz();
     state.cols = ws.ws_col;
     state.rows = ws.ws_row;
 
+    try collectTasks();
     updateLoop();
 }
 
