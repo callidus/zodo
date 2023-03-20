@@ -74,6 +74,7 @@ const State = struct {
     filteredTasks: std.ArrayList(*Task),
     projectFilter: bool,
     contextFilter: bool,
+    shouldSort: bool,
 };
 
 // global state instance
@@ -89,6 +90,7 @@ var state = State{
     .filteredTasks = undefined,
     .projectFilter = false,
     .contextFilter = false,
+    .shouldSort = false,
 };
 
 fn display() void {
@@ -141,12 +143,16 @@ fn display() void {
     };
 
     // print project filter status
-    tui.setColour(if (state.projectFilter) tui.buildColour(tui.Colour.FG_GREEN, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+    tui.setColour(if (state.shouldSort) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+    tui.output(" | Sort ");
+
+    // print project filter status
+    tui.setColour(if (state.projectFilter) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
     tui.output(" | Project: ");
     if (state.projectFilter) tui.output(state.project.memory[0..state.project.fill]);
 
     // print context filter status
-    tui.setColour(if (state.contextFilter) tui.buildColour(tui.Colour.FG_BLUE, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+    tui.setColour(if (state.contextFilter) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
     tui.output(" | Context: ");
     if (state.contextFilter) tui.output(state.context.memory[0..state.context.fill]);
 
@@ -331,11 +337,26 @@ fn updateLoop() void {
                 state.contextFilter = false;
                 shouldFilter = true;
             },
+            's' => {
+                if (!state.shouldSort) {
+                    state.shouldSort = true;
+                    sortTasks();
+                }
+            },
+            'S' => {
+                if (state.shouldSort) {
+                    state.shouldSort = false;
+                    collectTasks() catch unreachable;
+                }
+            },
             else => {},
         }
 
         if (shouldFilter) {
             filterTasks() catch unreachable;
+            if (state.shouldSort) {
+                sortTasks();
+            }
             shouldFilter = false;
         }
     }
@@ -386,6 +407,15 @@ fn collectTasks() !void {
     for (state.tasks.items) |*task| {
         if (!task.hidden) try state.filteredTasks.append(task);
     }
+}
+
+fn compareTasks(comptime T: type, lhs: *Task, rhs: *Task) bool {
+    _ = T;
+    return lhs.priority < rhs.priority;
+}
+
+fn sortTasks() void {
+    std.sort.sort(*Task, state.filteredTasks.items, void, compareTasks);
 }
 
 pub fn main() !void {
