@@ -2,7 +2,7 @@ const std = @import("std");
 const sys = std.os.system;
 const tui = @import("tui");
 
-const TokType = enum { DONE, PRIORITY, DATE, WORDS, CONTEXT, PROJECT };
+const TokType = enum { DONE, PRIORITY, DATE, WORDS, CONTEXT, PROJECT, BODY };
 
 const Token = struct {
     type: TokType,
@@ -122,9 +122,12 @@ fn display() void {
                     TokType.PROJECT => {
                         tui.setColour(tui.buildColour(tui.Colour.FG_GREEN, tui.ColourMod.NONE));
                     },
+                    TokType.BODY => {},
                 }
             }
-            tui.output(token.data[0..std.math.min(state.cols - 2, token.data.len)]);
+            if (token.type != TokType.BODY) {
+                tui.output(token.data[0..std.math.min(state.cols - 2, token.data.len)]);
+            }
         }
         tui.output("\r\n");
         tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
@@ -273,8 +276,15 @@ fn parseLines(data: []const u8, alloc: std.mem.Allocator) !std.ArrayList(Task) {
     var tasks = std.ArrayList(Task).init(alloc);
     var readIter = std.mem.tokenize(u8, data, "\n");
     while (readIter.next()) |line| {
-        var task = try lineToTask(line, alloc);
-        try tasks.append(task);
+        if (tasks.items.len > 0 and (line[0] == ' ' or line[0] == '\t')) { // its a sub-line of the previous task, add it
+            try tasks.items[tasks.items.len - 1].tokens.append(Token{
+                .type = TokType.BODY,
+                .data = line,
+            });
+        } else { // consider it a new task, parse it
+            var task = try lineToTask(line, alloc);
+            try tasks.append(task);
+        }
     }
     return tasks;
 }
