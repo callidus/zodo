@@ -101,11 +101,13 @@ fn display() void {
         if (i < state.offset) continue;
         tui.output(if (i == state.highlight) ">" else " ");
 
+        var numOutGlyphs: usize = 1; // track num letters out, so we can truncate lines
+
         if (task.done) {
             tui.setColour(tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
         }
 
-        for (task.tokens.items) |token| {
+        for (task.tokens.items) |token| { // work out the colour to use, based on token
             if (!task.done) {
                 switch (token.type) {
                     TokType.DONE => {},
@@ -125,8 +127,17 @@ fn display() void {
                     TokType.BODY => {},
                 }
             }
-            if (token.type != TokType.BODY) {
-                tui.output(token.data[0..std.math.min(state.cols - 2, token.data.len)]);
+
+            if (token.type != TokType.BODY) { // output visible tokens
+                var maxOut = std.math.min(token.data.len, state.cols - numOutGlyphs - 4);
+                tui.output(token.data[0..maxOut]);
+                numOutGlyphs += maxOut;
+
+                if (maxOut < token.data.len) { // no more space, show "..."
+                    tui.setColour(tui.buildColour(tui.Colour.FG_DEFAULT, tui.ColourMod.NONE));
+                    tui.output(" ...");
+                    break;
+                }
             }
         }
         tui.output("\r\n");
