@@ -70,10 +70,22 @@ pub fn output(data: []const u8) void {
 const tempBufferSz = 128;
 var tempBuffer: [tempBufferSz]u8 = undefined;
 
+// formatted output
 pub fn outputFmt(comptime fmt: []const u8, args: anytype) !void {
     var fbs = std.io.fixedBufferStream(&tempBuffer);
     try std.fmt.format(fbs.writer(), fmt, args);
     output(fbs.getWritten());
+}
+
+// formatted output of at most 'num' bytes, returns number written
+pub fn outputFmtNum(comptime fmt: []const u8, args: anytype, num: usize) !usize {
+    var fbs = std.io.fixedBufferStream(&tempBuffer);
+    try std.fmt.format(fbs.writer(), fmt, args);
+
+    const a = fbs.getWritten();
+    const i = std.math.min(a.len, num);
+    output(a[0..i]);
+    return i;
 }
 
 pub fn flush() void {

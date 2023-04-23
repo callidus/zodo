@@ -152,27 +152,36 @@ fn display() void {
     }
 
     // print footer
-    tui.outputFmt("({}/{})", .{ state.highlight + 1, state.filteredTasks.items.len }) catch {
+    var tmp: usize = state.cols - 4;
+    tmp -= tui.outputFmtNum("({}/{})", .{ state.highlight + 1, state.filteredTasks.items.len }, tmp) catch {
         unreachable;
     };
 
-    // print project filter status
-    tui.setColour(if (state.shouldSort) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
-    tui.output(" | Sort ");
-
-    // print project filter status
-    tui.setColour(if (state.projectFilter) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
-    tui.output(" | Project: ");
-    if (state.projectFilter) tui.output(state.project.memory[0..state.project.fill]);
-
-    // print context filter status
-    tui.setColour(if (state.contextFilter) tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD) else tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
-    tui.output(" | Context: ");
-    if (state.contextFilter) tui.output(state.context.memory[0..state.context.fill]);
+    if (tmp > 0) tmp = printFooter(tmp, " | Sort ", "", state.shouldSort);
+    if (tmp > 0) tmp = printFooter(tmp, " | Project: ", state.project.memory[0..state.project.fill], state.projectFilter);
+    if (tmp > 0) tmp = printFooter(tmp, " | Context: ", state.context.memory[0..state.context.fill], state.contextFilter);
 
     // reset for next run
     tui.setColour(tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.NONE));
     tui.flush();
+}
+
+fn printFooter(remaining: usize, title: []const u8, body: []const u8, active: bool) usize {
+    var size: usize = 0;
+
+    if (active) {
+        tui.setColour(tui.buildColour(tui.Colour.FG_YELLOW, tui.ColourMod.BOLD));
+        size = (tui.outputFmtNum("{s}{s}", .{ title, body }, remaining) catch unreachable);
+    } else {
+        tui.setColour(tui.buildColour(tui.Colour.FG_WHITE, tui.ColourMod.LOW));
+        size = (tui.outputFmtNum("{s}", .{title}, remaining) catch unreachable);
+    }
+
+    size = remaining - size;
+    if (size == 0) {
+        tui.output(" ...");
+    }
+    return size;
 }
 
 // read in a file
