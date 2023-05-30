@@ -29,7 +29,7 @@ fn Buffer(comptime T: usize) type {
         fill: usize,
 
         fn clear(self: *@This()) void {
-            std.mem.set(u8, &self.memory, 0);
+            @memset(&self.memory, 0);
             self.fill = 0;
         }
 
@@ -57,7 +57,7 @@ fn buildBuffer(comptime T: usize) Buffer(T) {
         .memory = undefined,
         .fill = 0,
     };
-    std.mem.set(u8, &b.memory, 0);
+    @memset(&b.memory, 0);
     return b;
 }
 
@@ -439,13 +439,12 @@ fn collectTasks() !void {
     }
 }
 
-fn compareTasks(comptime T: type, lhs: *Task, rhs: *Task) bool {
-    _ = T;
+fn compareTasks(_: void, lhs: *Task, rhs: *Task) bool {
     return lhs.priority < rhs.priority;
 }
 
 fn sortTasks() void {
-    std.sort.sort(*Task, state.filteredTasks.items, void, compareTasks);
+    std.sort.heap(*Task, state.filteredTasks.items, {}, compareTasks);
 }
 
 pub fn main() !void {
